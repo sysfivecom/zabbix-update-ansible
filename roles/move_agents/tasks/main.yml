@@ -1,0 +1,55 @@
+---
+
+# This role moves agents from one proxy to another
+# requires: old_proxy/new_proxy as vars
+#           zabbix_apihost as var (used for delegation)
+# create_inventory role has to be run before this, so that the
+# corresponding host groups exist
+
+- name: move hosts to from old to new proxy
+  zabbix_api:
+    server_url: "http://localhost:9595/"
+    login_user: "{{ zabbix_apiuser }}"
+    login_password: "{{ zabbix_apipw }}"
+    api_object: "host"
+    api_method: "update"
+    api_options:
+        {"hostid": "{{ item.hostid }}",
+         "proxy_hostid": "{{ hostvars[new_proxy].proxyid }}"}
+  loop: "{{ hostvars[old_proxy].zabbix_hosts.result }}"
+  delegate_to: "{{ zabbix_apihost }}"
+
+- name: Set Zabbix Server Parameter
+  raw: |
+    # listing all the possible variants where sed could be to ensure it works everywhere
+    /bin/sed -i 's/^Server=.*/Server={{ hostvars[new_proxy].ansible_host }}/' /etc/zabbix/zabbix_agentd.conf ||
+    /usr/bin/sed -i 's/^Server=.*/Server={{ hostvars[new_proxy].ansible_host }}/' /etc/zabbix/zabbix_agentd.conf
+  become: true
+  ignore_errors: true
+  delegate_to: "{{ hostvars[item].ansible_host }}"
+  loop: "{{ groups[old_proxy + '_agent'] }}"
+  when: groups[old_proxy + '_agent'] is defined
+
+- name: Set Zabbix ServerActive Parameter
+  raw: |
+    # listing all the possible variants where sed could be to ensure it works everywhere
+    /bin/sed -i 's/^ServerActive=.*/ServerActive={{ hostvars[new_proxy].ansible_host }}/' /etc/zabbix/zabbix_agentd.conf ||
+    /usr/bin/sed -i 's/^ServerActive=.*/ServerActive={{ hostvars[new_proxy].ansible_host }}/' /etc/zabbix/zabbix_agentd.conf
+  become: true
+  ignore_errors: true
+  delegate_to: "{{ hostvars[item].ansible_host }}"
+  loop: "{{ groups[old_proxy + '_agent'] }}"
+  when: groups[old_proxy + '_agent'] is defined
+
+- name: Restart Zabbix Agent
+  raw: |
+    # Listing all the possible variants of service/rcctl/systemctl to ensure it works everywhere
+    /sbin/service zabbix-agent restart ||
+    /usr/bin/systemctl restart zabbix-agent ||
+    /bin/systemctl restart zabbix-agent ||
+    /usr/sbin/rcctl restart zabbix_agentd
+  become: true
+  ignore_errors: true
+  delegate_to: "{{ hostvars[item].ansible_host }}"
+  loop: "{{ groups[old_proxy + '_agent'] }}"
+  when: groups[old_proxy + '_agent'] is defined

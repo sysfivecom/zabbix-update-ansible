@@ -1,0 +1,416 @@
+---
+# This is a very massive and powerful full stack upgrade playbook for
+# our complete zabbix installation
+# for testing run it as: ansible-playbook upgrade_zabbix.yml -i vagrant_inventory
+# for production run it as: ansible-playbook upgrade_zabbix.yml -i live_inventory
+
+- hosts: zabbix_proxy
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: create_inventory
+      tags: create_inventory
+
+- hosts: zabbix_proxy_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: move_agents
+      vars:
+        new_proxy: "{{ failover }}"
+        old_proxy: "{{ inventory_hostname }}"
+        zabbix_apihost: "{{ groups['zabbix_web'][0] }}"
+      tags: move_agents_begin
+    - pause:
+        minutes: 3
+        prompt: Waiting for the Zabbix Server to distribute all changes
+      tags: move_agents_begin
+
+- hosts: zabbix_web_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reconfigure_web
+      vars:
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set1'][0]].ansible_host }}"
+        zabbix_server: "{{ hostvars[groups['zabbix_server_set1'][0]].ansible_host }}"
+      tags: initial_split
+
+- hosts: zabbix_web_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reconfigure_web
+      vars:
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set2'][0]].ansible_host }}"
+        zabbix_server: "{{ hostvars[groups['zabbix_server_set2'][0]].ansible_host }}"
+      tags: initial_split
+
+- hosts: zabbix_server_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reconfigure_server
+      vars:
+        pcs_node_mode: standby
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set1'][0]].ansible_host }}"
+        zabbix_server: "{{ ansible_host }}"
+      tags: initial_split
+ 
+- hosts: zabbix_server_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reconfigure_server
+      vars:
+        pcs_node_mode: standby
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set2'][0]].ansible_host }}"
+        zabbix_server: "{{ ansible_host }}"
+      tags: initial_split
+
+- hosts: zabbix_server_set1
+  gather_facts: no
+  tasks:
+    - name: Start Zabbix Server on Set 1
+      service:
+        name: zabbix-server
+        state: started
+      become: true
+      tags: initial_split
+
+- hosts: zabbix_proxy
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: set all proxies to "active" to prevent communication
+      zabbix_proxy:
+        server_url: "http://localhost:9595/"
+        login_user: "{{ zabbix_apiuser }}"
+        login_password: "{{ zabbix_apipw }}"
+        proxy_name: "{{ inventory_hostname }}-proxy"
+        status: active
+      delegate_to: "{{ groups['zabbix_web_set1'][0] }}"
+      tags: initial_split
+
+- hosts: zabbix_db
+  gather_facts: no
+  serial: 1
+  tasks:
+    - pause:
+        minutes: 1
+        prompt: Wait 1 min for zabbix server to acknowledge changes
+      tags: initial_split
+    - import_role:
+        name: reconfigure_db
+      vars:
+        pcs_node_mode: standby
+        galera_cluster: "{{ ansible_host }}"
+        galera_bootstrap: true
+      tags: initial_split
+        
+- hosts: zabbix_proxy_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: set all set 1 proxies to passive to work productively
+      zabbix_proxy:
+        server_url: "http://localhost:9595/"
+        login_user: "{{ zabbix_apiuser }}"
+        login_password: "{{ zabbix_apipw }}"
+        proxy_name: "{{ inventory_hostname }}-proxy"
+        status: passive
+        interface: { "dns":  "{{ proxy_interface.dns }}",
+                     "ip":   "{{ proxy_interface.ip }}",
+                     "port": "{{ proxy_interface.port }}",
+                     "useip":"{{ proxy_interface.useip }}" }
+      delegate_to: "{{ groups['zabbix_web_set1'][0] }}"
+      tags: initial_split
+
+- hosts: zabbix_proxy_set2
+  gather_facts: no
+  serial: 10
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: proxy
+        service_state: started
+      tags: upgrade_set2
+  
+- hosts: zabbix_server_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: server
+        service_state: stopped
+      tags: upgrade_set2
+    - import_role:
+        name: reconfigure_server
+      vars:
+        pcs_node_mode: standby
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set2'][0]].ansible_host }}"
+        zabbix_server: "{{ ansible_host }}"
+      tags: upgrade_set2
+    - name: Start Zabbix Server on Set 2 (start DB upgrade)
+      service:
+        name: zabbix-server
+        state: started
+      become: true
+      tags: upgrade_set2
+    - name: Waiting for Server Startup
+      wait_for:
+        path: /var/log/zabbix/zabbix_server.log
+        search_regex: "server #0 started"
+        timeout: 18000
+      tags: upgrade_set2
+
+- hosts: zabbix_web_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: web
+        service_state: started
+      tags: upgrade_set2
+    - import_role:
+        name: reconfigure_server
+      vars:
+        pcs_node_mode: standby
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set2'][0]].ansible_host }}"
+        zabbix_server: "{{ ansible_host }}"
+      when: groups['zabbix_web_set2'][0] == groups['zabbix_server_set2'][0]
+      tags: upgrade_set2
+    - name: Ensure Zabbix Server on Set 2 is stopped
+      service:
+        name: zabbix-server
+        state: stopped
+      become: true
+      when: groups['zabbix_web_set2'][0] == groups['zabbix_server_set2'][0]
+      tags: upgrade_set2
+    - import_role:
+        name: reconfigure_web
+      vars:
+        db_port: "{{ mariadb_node_port }}"
+        db_server: "{{ hostvars[groups['zabbix_db_set2'][0]].ansible_host }}"
+        zabbix_server: "{{ hostvars[groups['zabbix_server_set2'][0]].ansible_host }}"
+      tags: upgrade_set2
+    - pause:
+        prompt: Ready for startup of new Zabbix - Press ENTER
+
+- hosts: zabbix_proxy_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: move_agents
+      vars:
+        new_proxy: "{{ inventory_hostname }}"
+        old_proxy: "{{ failover }}"
+        zabbix_apihost: "{{ groups['zabbix_web_set2'][0] }}"
+      tags: startup_set2
+    - import_role:
+        name: move_agents
+      vars:
+        new_proxy: "{{ inventory_hostname }}"
+        old_proxy: "{{ inventory_hostname }}"
+        zabbix_apihost: "{{ groups['zabbix_web_set2'][0] }}"
+      tags: startup_set2
+    - name: set all set 2 proxies to passive to work productively
+      zabbix_proxy:
+        server_url: "http://localhost:9595/"
+        login_user: "{{ zabbix_apiuser }}"
+        login_password: "{{ zabbix_apipw }}"
+        proxy_name: "{{ inventory_hostname }}-proxy"
+        status: passive
+        interface: { "dns":  "{{ proxy_interface.dns }}",
+                     "ip":   "{{ proxy_interface.ip }}",
+                     "port": "{{ proxy_interface.port }}",
+                     "useip":"{{ proxy_interface.useip }}" }
+      delegate_to: "{{ groups['zabbix_web_set2'][0] }}"
+      tags: startup_set2
+
+- hosts: zabbix_proxy_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: Shutdown zabbix proxy
+      service:
+        name: zabbix-proxy
+        state: stopped
+      become: true
+      tags: startup_set2
+
+    - name: Shutdown zabbix java gateway
+      service:
+        name: zabbix-java-gateway
+        state: stopped
+      become: true
+      tags: startup_set2
+
+- hosts: zabbix_server_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: Shutdown zabbix server
+      service:
+        name: zabbix-server
+        state: stopped
+      become: true
+      tags: startup_set2
+
+- hosts: zabbix_server_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: Start zabbix server
+      service:
+        name: zabbix-server
+        state: started
+      become: true
+      tags: startup_set2
+
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - import_role:
+        name: evaluation
+      vars:
+        upgrade_state: intermediate
+      tags: evaluation
+
+- hosts: zabbix_db_set1
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reinstall_db
+      tags: resync_cluster
+
+- hosts: zabbix_db_set2
+  gather_facts: no
+  serial: 1
+  tasks:
+    - import_role:
+        name: reconfigure_db
+      vars:
+        pcs_node_mode: standby
+        galera_cluster: "{{ ansible_host }},{{ hostvars[groups['zabbix_db_set1'][0]]['ansible_host'] }}"
+        galera_bootstrap: false
+      tags: resync_cluster
+
+- hosts: zabbix_db_set2
+  gather_facts: no
+  tasks:
+    - name: Activate Maxscale Pacemaker again
+      shell: pcs node unstandby {{ inventory_hostname }}
+      become: true
+      tags: resync_cluster
+
+- hosts: zabbix_proxy_set1
+  gather_facts: no
+  serial: 10
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: proxy
+        service_state: started
+      tags: upgrade_set1
+
+- hosts: zabbix_server_set1
+  gather_facts: no
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: server
+        service_state: stopped
+      tags: upgrade_set1
+
+- hosts: zabbix_web_set1
+  gather_facts: no
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: web
+        service_state: started
+      tags: upgrade_set1
+
+- hosts: zabbix_server_set2
+  gather_facts: no
+  tasks:
+    - name: Stop Server on Node 2
+      service:
+        name: zabbix-server
+        state: stopped
+      become: true
+      tags: finalize_config
+    - name: Activate pacemaker Zabbix Node 1
+      shell: pcs node unstandby {{ groups['zabbix_server_set1'][0] }}
+      become: true
+      tags: finalize_config
+    - import_tasks: roles/common/tasks/chef.yml
+      tags:
+        - finalize_config
+    - name: Activate pacemaker Zabbix Node 2
+      shell: pcs node unstandby {{ inventory_hostname }}
+      become: true
+      tags: finalize_config
+
+- hosts: zabbix_proxy
+  gather_facts: no
+  serial: 1
+  tasks:
+    - name: set all proxies to passive to work productively
+      zabbix_proxy:
+        server_url: "http://localhost:9595/"
+        login_user: "{{ zabbix_apiuser }}"
+        login_password: "{{ zabbix_apipw }}"
+        proxy_name: "{{ inventory_hostname }}-proxy"
+        status: passive
+        interface: { "dns":  "{{ proxy_interface.dns }}",
+                     "ip":   "{{ proxy_interface.ip }}",
+                     "port": "{{ proxy_interface.port }}",
+                     "useip":"{{ proxy_interface.useip }}" }
+      delegate_to: "{{ groups['zabbix_web_set1'][0] }}"
+      tags: finalize_config
+
+    - import_role:
+        name: move_agents
+      vars:
+        new_proxy: "{{ inventory_hostname }}"
+        old_proxy: "{{ inventory_hostname }}"
+        zabbix_apihost: "{{ groups['zabbix_web'][0] }}"
+      tags: finalize_config
+
+- hosts: zabbix_agent
+  gather_facts: no
+  serial: 10
+  max_fail_percentage: 25%
+  tasks:
+    - import_role:
+        name: reinstall_zabbix
+      vars:
+        node_type: agent
+        service_state: started
+      tags:
+        - upgrade_agents
+# to do: test for debian proxy/agent, openbsd + xenserver agent reconfiguration

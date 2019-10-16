@@ -1,0 +1,34 @@
+---
+
+- name: "Change pacemaker node status to {{ pcs_node_mode }}"
+  shell: pcs node {{ pcs_node_mode }} {{ inventory_hostname }}
+  become: true
+
+- name: Set Source IP
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^SourceIP='
+    line: "SourceIP={{ zabbix_server }}"
+  become: true
+
+- name: Set Listen IP
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^ListenIP='
+    line: "ListenIP={{ zabbix_server }}"
+  become: true
+
+- name: Set DB Host
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^DBHost='
+    line: "DBHost={{ db_server }}"
+  become: true
+
+- name: Set DB Port
+  lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^DBPort='
+    line: "DBPort={{ db_port }}"
+  become: true
+

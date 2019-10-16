@@ -1,0 +1,37 @@
+---
+
+# This role is meant to reinstall MariaDB server
+# it should be used after a split brain situation to throw away
+# one node and reinstall/resync it in a clean way
+# Attention: When maxscale is running, move it to another node
+# before executing this, otherwise it could create port 3306 collisions
+
+- name: Stop MariaDB Service
+  service:
+    name: mariadb
+    state: stopped
+  become: true
+
+- name: Remove MariaDB packages
+  yum:
+    name:
+      - MariaDB-server
+      - MariaDB-client
+      - MariaDB-compat
+      - MariaDB-common
+      - MariaDB-backup
+    state: absent
+    update_cache: true
+  become: true
+
+- name: Remove MariaDB Config
+  file:
+    path: /etc/my.cnf.d
+    state: absent
+  become: true
+
+- name: Remove MariaDB Data
+  shell: rm -rf /var/lib/mysql/*
+  become: true
+
+- import_tasks: ../../common/tasks/chef.yml

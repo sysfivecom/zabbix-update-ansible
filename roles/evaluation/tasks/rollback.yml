@@ -1,0 +1,72 @@
+---
+
+# these are the necessary steps for rollback
+
+- name: Stop new proxies
+  service:
+    name: zabbix-proxy
+    state: stopped
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_proxy_set2']}}"
+
+- name: Stop new java gateways
+  service:
+    name: zabbix-java-gateway
+    state: stopped
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_proxy_set2']}}"
+
+- name: Stop new server
+  service:
+    name: zabbix-server
+    state: stopped
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_server_set2']}}"
+
+- name: Start old proxies
+  service:
+    name: zabbix-proxy
+    state: started
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_proxy_set1']}}"
+
+- name: Start old java gateways
+  service:
+    name: zabbix-java-gateway
+    state: started
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_proxy_set1']}}"
+
+- name: Start old server
+  service:
+    name: zabbix-server
+    state: started
+  delegate_to: "{{ item }}"
+  become: true
+  loop: "{{ groups['zabbix_server_set1']}}"
+
+- include_role:
+    name: move_agents
+  vars:
+    new_proxy: "{{ proxy_item }}"
+    old_proxy: "{{ proxy_item }}"
+    zabbix_apihost: "{{ groups['zabbix_web_set1'][0] }}"
+  delegate_to: "{{ proxy_item }}"
+  loop: "{{ groups['zabbix_proxy_set1']}}"
+  loop_control:
+    loop_var: proxy_item
+- include_role:
+    name: move_agents
+  vars:
+    new_proxy: "{{ proxy_item }}"
+    old_proxy: "{{ hostvars[proxy_item]['failover'] }}"
+    zabbix_apihost: "{{ groups['zabbix_web_set1'][0] }}"
+  delegate_to: "{{ proxy_item }}"
+  loop: "{{ groups['zabbix_proxy_set1']}}"
+  loop_control:
+    loop_var: proxy_item

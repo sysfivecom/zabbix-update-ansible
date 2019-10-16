@@ -1,0 +1,81 @@
+# This inventory contains all hosts of the zabbix infrastructure
+# we are using in production
+# It generally splits up everything in two corresponding sets to allow
+# the partial upgrade/split brain situation
+# some general rules:
+# only one host per zabbix db and server set
+# each proxy needs a failover
+# zabbix db and server need their IPs as ansible host variable for some configs
+
+localhost ansible_connection=local
+
+[zabbix_db_set1]
+ssfnzbd911 ansible_host=10.211.55.131
+
+[zabbix_db_set2]
+ssfnzbd921 ansible_host=10.211.55.132
+
+[zabbix_db:children]
+zabbix_db_set1
+zabbix_db_set2
+
+[zabbix_server_set1]
+ssfnzas911 ansible_host=10.211.55.101
+
+[zabbix_server_set2]
+ssfnzas921 ansible_host=10.211.55.102
+
+[zabbix_server:children]
+zabbix_server_set1
+zabbix_server_set2
+
+[zabbix_web_set1]
+ssfnzas911 ansible_host=10.211.55.101
+
+[zabbix_web_set2]
+ssfnzas921 ansible_host=10.211.55.102
+
+[zabbix_web:children]
+zabbix_web_set1
+zabbix_web_set2
+
+[zabbix_proxy_set1]
+ssfnzap911 ansible_host=10.211.55.111 failover=ssfnzap921
+
+[zabbix_proxy_set2]
+ssfnzap921 ansible_host=10.211.55.112 failover=ssfnzap911
+
+[zabbix_proxy:children]
+zabbix_proxy_set1
+zabbix_proxy_set2
+
+[all:vars]
+# Settings for MariaDB
+mariadb_cluster_name="ssfn3zbd"
+mariadb_cluster_subnet="10.211.55.%"
+mariadb_root_password="MariaDB2018"
+mariadb_node_port=13306
+
+# Settings for MaxScale Load Balancing
+maxscale_user="maxscale"
+maxscale_password="MaxScale2018"
+maxscale_port=3306
+
+# Settings for MaxScale HA via Pacemaker
+maxscale_cluster_name="ssfn3zbd_pm"
+maxscale_cluster_password="Pacemaker2018"
+maxscale_cluster_ip="10.211.55.249"
+
+# Settings for Zabbix HA via Pacemaker
+zabbix_cluster_name="ssfn3zas_pm"
+zabbix_cluster_password="Pacemaker2018"
+zabbix_cluster_ip="10.211.55.248"
+
+# Settings for Zabbix DB Access
+zabbix_dbname="zabbixdb"
+zabbix_dbuser="zabbixuser"
+zabbix_dbpw="zabbixpw"
+
+# Settings for Zabbix API Access
+zabbix_apiuser=Admin
+zabbix_apipw=zabbix

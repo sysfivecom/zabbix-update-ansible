@@ -1,0 +1,43 @@
+---
+
+# This role does all the necessary work for rollback/forward
+# due to the nature of it's control, it has to use a lot of delegation
+# and generally run on localhost
+
+- pause:
+    prompt: "Enter option number: 1) finish upgrade 2) roll back"
+  register: result
+  when: upgrade_state == 'intermediate'
+
+- set_fact:
+    upgrade_step: "{{ result.user_input }}"
+  when: upgrade_state == 'intermediate'
+
+- pause:
+    prompt: "Enter option number: 3) forward upgrade"
+  register: result
+  when: upgrade_state == 'rollback'
+
+# finishing upgrade does not happen here, but after this play, so we only deal with rollback/forward
+
+- set_fact:
+    upgrade_step: "{{ result.user_input }}"
+  when: upgrade_state == 'rollback'
+
+- include_tasks: rollback.yml
+  when: upgrade_step|int == 2
+
+- include_tasks: rollforward.yml
+  when: upgrade_step|int == 3
+
+- include_role:
+    name: evaluation
+  vars:
+    upgrade_state: "rollback"
+  when: upgrade_step|int == 2
+
+- include_role:
+    name: evaluation
+  vars:
+    upgrade_state: "intermediate"
+  when: upgrade_step|int == 3

@@ -1,0 +1,38 @@
+---
+
+- name: "Change pacemaker node status to {{ pcs_node_mode }}"
+  shell: pcs node {{ pcs_node_mode }} {{ inventory_hostname }}
+  become: true
+
+- name: Stop MariaDB before reconfiguring
+  service:
+    name: mariadb
+    state: stopped
+  become: true
+
+- name: Set Galera IP(s)
+  lineinfile:
+    path: /etc/my.cnf.d/server.cnf
+    regexp: '^wsrep_cluster_address='
+    line: "wsrep_cluster_address='gcomm://{{ galera_cluster }}'"
+  become: true
+
+- name: Force bootstrap safe (we are going to have a split brain anyways)
+  lineinfile:
+    path: /var/lib/mysql/grastate.dat
+    regexp: '^safe_to_bootstrap'
+    line: "safe_to_bootstrap: 1"
+  when: galera_bootstrap == true
+  become: true
+
+- name: Start new Galera Cluster
+  shell: galera_new_cluster
+  when: galera_bootstrap is defined and galera_bootstrap == true
+  become: true
+
+- name: Join existing Galera Cluster
+  service:
+    name: mariadb
+    state: started
+  when: galera_bootstrap is not defined or galera_bootstrap != true
+  become: true

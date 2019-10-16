@@ -1,0 +1,196 @@
+---
+
+# This role reinstalls a zabbix package (proxy, web, server or agent)
+# it detects the package manager (apt or yum - everything else will
+# be ignored), removes packages + repo and lets chef run to reinstall the new version
+# Note: Everything that may run on agent nodes must be raw
+
+- name: Check for yum repo
+  raw: ls /etc/yum.repos.d/repo.zabbix.com.repo
+  failed_when: false
+  register: result
+
+- name: Set yum fact
+  set_fact:
+    yum: "{{ result.rc == 0 }}"
+
+- name: Check for apt repo
+  raw: ls /etc/apt/sources.list.d/repo.zabbix.com.list
+  failed_when: false
+  register: result
+
+- name: Set apt fact
+  set_fact:
+    apt: "{{ result.rc == 0}}"
+
+- name: Stop Proxy
+  service:
+    name: zabbix-proxy
+    state: stopped
+  become: true
+  when: node_type == 'proxy'
+
+- name: Stop Java Gateway
+  service:
+    name: zabbix-java-gateway
+    state: stopped
+  become: true
+  when: node_type == 'proxy'
+
+- name: Stop Server
+  service:
+    name: zabbix-server
+    state: stopped
+  become: true
+  when: node_type == 'server'
+
+- name: Stop Web/nginx
+  service:
+    name: nginx
+    state: stopped
+  become: true
+  when: node_type == 'web'
+
+- name: Stop Agent
+  raw: |
+    # Listing all the possible variants of service/systemctl to ensure it works everywhere
+    /sbin/service zabbix-agent stop ||
+    /usr/bin/systemctl stop zabbix-agent ||
+    /bin/systemctl stop zabbix-agent
+  become: true
+  when: node_type == 'agent' and (apt or yum)
+
+- name: Remove Zabbix Proxy Packages (yum)
+  yum:
+    name:
+      - zabbix-proxy-sqlite3
+      - zabbix-java-gateway
+    state: absent
+  become: true
+  when: node_type == 'proxy' and yum
+
+- name: Remove Zabbix Proxy Packages (apt)
+  apt:
+    name:
+      - zabbix-proxy-sqlite3
+      - zabbix-java-gateway
+    state: absent
+  become: true
+  when: node_type == 'proxy' and apt
+
+- name: Remove Proxy Database
+  file:
+    path: /var/lib/zabbix/zabbix-proxy.db
+    state: absent
+  become: true
+  when: node_type == 'proxy'
+
+- name: Remove Zabbix Server Packages (yum)
+  yum:
+    name:
+      - zabbix-server-mysql
+    state: absent
+  become: true
+  when: node_type == 'server' and yum
+
+- name: Remove Zabbix Server Packages (apt)
+  apt:
+    name:
+      - zabbix-server-mysql
+    state: absent
+  become: true
+  when: node_type == 'server' and apt
+
+- name: Remove Zabbix Web Packages (yum)
+  yum:
+    name:
+      - zabbix-web
+    state: absent
+  become: true
+  when: node_type == 'web' and yum
+
+- name: Remove Zabbix Web Packages (apt)
+  apt:
+    name:
+      - zabbix-web
+    state: absent
+  become: true
+  when: node_type == 'web' and apt
+
+- name: Remove Zabbix Agent Package (yum)
+  raw: yum remove -y zabbix-agent
+  become: true
+  when: node_type == 'agent' and yum
+
+- name: Remove Zabbix Agent Package (apt)
+  apt:
+    name:
+      - zabbix-agent
+    state: absent
+  become: true
+  when: node_type == 'agent' and apt
+
+# for all
+- name: Remove Repository (yum)
+  raw: rm -f /etc/yum.repos.d/repo.zabbix.com.repo
+  become: true
+  when: yum
+
+- name: Clean yum cache
+  raw: |
+          yum clean all
+          rm -rf /var/cache/yum/*
+  become: true
+  when: yum
+
+- name: Remove Repository (apt)
+  file:
+    path: /etc/apt/sources.list.d/repo.zabbix.com.list
+    state: absent
+  become: true
+  when: apt
+
+- name: Clean apt cache
+  shell: apt clean
+  become: true
+  when: apt
+
+- import_tasks: ../../common/tasks/chef.yml
+
+# handle services
+- name: Set zabbix-proxy to {{ service_state }}
+  service:
+    name: zabbix-proxy
+    state: "{{ service_state }}"
+  become: true
+  when: node_type == 'proxy'
+
+- name: Set zabbix-java-gateway to {{ service_state }}
+  service:
+    name: zabbix-java-gateway
+    state: "{{ service_state }}"
+  become: true
+  when: node_type == 'proxy'
+
+- name: Set zabbix-server to {{ service_state }}
+  service:
+    name: zabbix-server
+    state: "{{ service_state }}"
+  become: true
+  when: node_type == 'server'
+
+- name: Set zabbix-web/nginx to {{ service_state }}
+  service:
+    name: nginx
+    state: "{{ service_state }}"
+  become: true
+  when: node_type == 'web'
+
+- name: Set zabbix-agent to started (nothing else supported for agent)
+  raw: |
+    # Listing all the possible variants of service/systemctl to ensure it works everywhere
+    /sbin/service zabbix-agent start ||
+    /usr/bin/systemctl start zabbix-agent ||
+    /bin/systemctl start zabbix-agent
+  become: true
+  when: node_type == 'agent'

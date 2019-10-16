@@ -1,0 +1,59 @@
+---
+
+- name: Get all proxy host IDs
+  zabbix_api:
+    server_url: "http://localhost:9595/"
+    login_user: "{{ zabbix_apiuser }}"
+    login_password: "{{ zabbix_apipw }}"
+    api_object: "proxy"
+    api_method: "get"
+    api_options:
+      {"filter": '{"host": "{{ inventory_hostname }}-proxy"}',
+       "selectInterface": "extend"}
+  register: result
+  delegate_to: "{{ groups['zabbix_web'][0] }}"
+  changed_when: false
+- name: Set Proxy ID
+  set_fact:
+    proxyid: "{{ result['result'][0]['proxyid'] }}"
+- name: Set Interface
+  set_fact:
+    proxy_interface: "{{ result['result'][0]['interface'] }}"
+- name: get info about all monitored hosts
+  zabbix_api:
+    server_url: "http://localhost:9595/"
+    login_user: "{{ zabbix_apiuser }}"
+    login_password: "{{ zabbix_apipw }}"
+    api_object: "host"
+    api_method: "get"
+    api_options:
+        {"filter": {"proxy_hostid": "{{ proxyid }}"},
+         "selectInterfaces": "extend"}
+  delegate_to: "{{ groups['zabbix_web'][0] }}"
+  register: zabbix_hosts
+  changed_when: false
+
+- name: Add discovered host to inventory (Using IP for connections)
+  add_host:
+    name: "{{ item.host }}"
+    ansible_host: "{{ item.interfaces[0].ip }}"
+    groups: "{{ inventory_hostname }}_agent,zabbix_agent"
+    zabbix_host: "{{ item }}"
+  when: item.interfaces[0].useip|int == 1 and item.interfaces[0].ip != '127.0.0.1'
+  loop: "{{ zabbix_hosts.result }}"
+- name: Add discovered host to inventory (Using DNS for connections)
+  add_host:
+    name: "{{ item.host }}"
+    ansible_host: "{{ item.interfaces[0].dns }}"
+    groups: "{{ inventory_hostname }}_agent,zabbix_agent"
+    zabbix_host: "{{ item }}"
+  when: item.interfaces[0].useip|int == 0 and item.interfaces[0].dns != 'localhost'
+  loop: "{{ zabbix_hosts.result }}"
+- name: Add discovered "dummy" host to inventory
+  add_host:
+    name: "{{ item.host }}"
+    ansible_host: "{{ item.interfaces[0].dns }}"
+    groups: "{{ inventory_hostname }}_agent_dummy,zabbix_agent_dummy"
+    zabbix_host: "{{ item }}"
+  when: item.interfaces[0].ip == '127.0.0.1' or item.interfaces[0].dns == 'localhost'
+  loop: "{{ zabbix_hosts.result }}"

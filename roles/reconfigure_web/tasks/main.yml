@@ -1,0 +1,31 @@
+---
+
+# Reconfigure the configuration for the web frontend
+# Requires: db_server, db_port, zabbix_server
+
+- name: Set Zabbix Server Parameter
+  lineinfile:
+    path: /etc/zabbix/web/zabbix.conf.php
+    regexp: '^\$ZBX_SERVER '
+    line: "$ZBX_SERVER                     = '{{ zabbix_server }}';"
+  become: true
+
+- name: Set Zabbix DB Server Parameter
+  lineinfile:
+    path: /etc/zabbix/web/zabbix.conf.php
+    regexp: '^\$DB\[\"SERVER\"\]'
+    line: "$DB[\"SERVER\"]                   = '{{ db_server }}';"
+  become: true
+
+- name: Set Zabbix DB Port Parameter
+  lineinfile:
+    path: /etc/zabbix/web/zabbix.conf.php
+    regexp: '^\$DB\[\"PORT\"\]'
+    line: "$DB[\"PORT\"]                     = '{{ db_port }}';"
+  become: true
+
+- name: Restart nginx to apply changes
+  service:
+    name: nginx
+    state: restarted
+  become: true
